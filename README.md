@@ -14,6 +14,23 @@ Let's deissect it into fields:
 these four bytes appear together, then you should konw this is the beginning for bitcoin networking package. And this number use to 
 differentiate the mainnet with testnet, for testnet, the four byte is 0b110907.
 
+2， the following 12 bytes is called command: 76657273696f6e0000000000, it used to describe the purpose of this packet. It can be humman
+readable string.
+
+3, the following 4 bytes: 65000000 it is payload length in little endian format,
+
+4, the following 4 bytes: 5f1a69d2 is first 4 bytes of  hash256 of the payload.
+
+5, the following bytes are data of the payload
+
+Let's see how to use code to parse the network packet data, first create a new directory named networking and add a new file with name:
+network_envelope.go, and add content like following:
+```go
+
+```
+
+
+
 
 
 
