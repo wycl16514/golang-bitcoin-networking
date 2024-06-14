@@ -190,8 +190,9 @@ f6a8d7a440ec27a1
 01
 ```
 
-1, the first 4 bytes: 7f110100 in little endian is the protocol version, different version number will indicate the node support
-what kind of bitcoin protocol(BIP XX), normally two nodes need to have the same protocol version then they can communicate smoothly.
+1, the first 4 bytes: 7f110100 in little endian is the protocol version,its value is 70015, at the time of writing, the bitcoin core
+version is 70016 .different version number will indicate the node support what kind of bitcoin protocol(BIP XX), 
+normally two nodes need to have the same protocol version then they can communicate smoothly.
 
 2, the following 8 bytes in little endian is network services of sender :0000000000000000
 
@@ -212,11 +213,17 @@ what kind of bitcoin protocol(BIP XX), normally two nodes need to have the same 
 
 11, the following 8 bytes is nonce, used for communicating response: f6a8d7a440ec27a1
 
-12, the following 28 bytes is user agent which is binary data for string: 1b2f70726f6772616d6d696e67626c6f636b636861696e3a302e312f
+12, the following 28 bytes is user agent which is binary data for string: 1b2f70726f6772616d6d696e67626c6f636b636861696e3a302e312f,
+at the beginning is the variant int to indicate the raw data length of the string, since the first byte is 1b, which indicates the 
+length of raw data is 1b, then the following bytes: 2f70726f6772616d6d696e67626c6f636b636861696e3a302e312f are string data
 
 13, the following 4 bytes is block height: 00000000
 
 14, the last one byte is optional flag for relay based on protocol BIP37: 01
+
+For more details about version command you can check here:
+
+https://en.bitcoin.it/wiki/Protocol_documentation#version
 
 Command "version" is used to initialize connection between two nodes. The payload for "version" command is a simple description the node
 itself, such as what kind of protocol version it supports. When the bitcoin node is setup and running, it will find a set of "node seeds"
