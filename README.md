@@ -219,10 +219,27 @@ what kind of bitcoin protocol(BIP XX), normally two nodes need to have the same 
 14, the last one byte is optional flag for relay based on protocol BIP37: 01
 
 Command "version" is used to initialize connection between two nodes. The payload for "version" command is a simple description the node
-itself, such as what kind of protocol version it supports.
+itself, such as what kind of protocol version it supports. When the bitcoin node is setup and running, it will find a set of "node seeds"
+by using some methods, we will not go into the detail of how to find the "node seeds".
 
+The node seeds is made up by a set of bitcoin full node clients, when the bitcoin node of you begin running, you need to indicate to all 
+your neighbors that you are going to joining them, and you send a "hello" message to all your neighbors, this hello message is the network
+packet with "version" command.
 
+The payload of the version command package is used to tell neighbors your basic infos such as what kind of bitcoin protocol (BIP) you can
+support. Sometimes you may want to say hello to specific peer, then you need to set the receiver ip in the receiver field in the payload.
+To be notics, the peer you want to reach may not in the set of your neighbors, then you need to ask you neighbors to relay the message to
+its neighbors until the message reach the given peer.
 
+For example, Bob has two neighbors with name Jim and Tom, and Bob want to send a hello message to Alice, but Bon can't reach Alice directly,
+therefore he just broadcast the message to Jim and Tom and ask them to help him relay the message to Alice. Jim and Tom will find Alice in
+their own neighbors.
 
+If Jim or Tom can find Alice in their neighbors, then they will relay the message to Alice, such relay is the characteristic of p2p network.
+When the Alice receives the version message, she will response the message with a "ack" packet and send her own version packet to Bob, and
+when Bob receives the version packet from Alice, then he send a "ack" packet to Alice, this process is called handshaking, the whole process
+is just like following:
 
+![截屏2024-06-14 13 03 40](https://github.com/wycl16514/golang-bitcoin-networking/assets/7506958/c2365245-d73b-4241-9750-d498ff9f0323)
 
+Let's use code to implement the given handshake process then you will gain a deeper understanding.
