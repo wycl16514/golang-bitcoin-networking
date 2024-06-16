@@ -127,8 +127,10 @@ func (n *NetworkEnvelope) Serialize() []byte {
 	*/
 	command := make([]byte, 0)
 	command = append(command, n.command...)
+	commandLen := len(command)
 	if len(command) < 12 {
-		for i := 0; i < 12-len(command); i++ {
+		//bug fix, we need to padd command to 12 bytes long
+		for i := 0; i < 12-commandLen; i++ {
 			command = append(command, 0x00)
 		}
 	}
@@ -249,4 +251,157 @@ is just like following:
 
 ![截屏2024-06-14 13 03 40](https://github.com/wycl16514/golang-bitcoin-networking/assets/7506958/c2365245-d73b-4241-9750-d498ff9f0323)
 
-Let's use code to implement the given handshake process then you will gain a deeper understanding.
+Let's use code to implement the given handshake process then you will gain a deeper understanding. Create a new file named version_msg.go
+and add the following code:
+
+```go
+package networking
+
+import (
+	"math/big"
+	"math/rand"
+	"time"
+	tx "transaction"
+)
+
+type VersionMessage struct {
+        command          string
+	version          *big.Int
+	services         *big.Int
+	timestamp        []byte
+	receiverServices *big.Int
+	receiverIP       []byte
+	receiverPort     uint16
+	senderServices   *big.Int
+	senderIP         []byte
+	senderPort       uint16
+	nonce            []byte
+	userAgent        string
+	latestBlock      *big.Int
+	relay            bool
+}
+
+func NewVersionMessage() *VersionMessage {
+	/*
+		version command used to init handshake between two nodes,
+		we only create this command to connect to a local full node
+		and we can set all the fields to default value
+	*/
+	timeStamp := big.NewInt(time.Now().Unix())
+	nonceBuf := make([]byte, 8)
+	rand.Read(nonceBuf)
+	return &VersionMessage{
+                command:          "version",
+		version:          big.NewInt(70015),
+		services:         big.NewInt(0),
+		timestamp:        timeStamp.Bytes(),
+		receiverServices: big.NewInt(0),
+		receiverIP:       []byte{0x00, 0x00, 0x00, 0x00},
+		receiverPort:     8333,
+		senderServices:   big.NewInt(0),
+		senderIP:         []byte{0x00, 0x00, 0x00, 0x00},
+		senderPort:       8333,
+		nonce:            nonceBuf,
+		userAgent:        "goloand_bitcoin_lib",
+		latestBlock:      big.NewInt(0),
+		relay:            false,
+	}
+}
+
+func (v *VerAckMessage)Command() string {
+	return v.command
+}
+
+func (v *VersionMessage) Serialize() []byte {
+	result := make([]byte, 0)
+	result = append(result, tx.ReverseByteSlice(v.version.Bytes())...)
+	result = append(result, tx.ReverseByteSlice(v.timestamp)...)
+	result = append(result, tx.BigIntToLittleEndian(v.receiverServices, tx.LITTLE_ENDIAN_8_BYTES)...)
+	//ip need to be 16 bytes with 0x00...ffff as prefix
+	ipBuf := make([]byte, 16)
+	for i := 0; i < 12; i++ {
+		if i < 10 {
+			ipBuf = append(ipBuf, 0x00)
+		} else {
+			ipBuf = append(ipBuf, 0xff)
+		}
+	}
+	ipBuf = append(ipBuf, v.receiverIP...)
+	result = append(result, ipBuf...)
+
+	result = append(result, tx.BigIntToLittleEndian(
+		big.NewInt(int64(v.receiverPort)), tx.LITTLE_ENDIAN_2_BYTES)...)
+	result = append(result, tx.BigIntToLittleEndian(v.senderServices, tx.LITTLE_ENDIAN_8_BYTES)...)
+	ipBuf = make([]byte, 16)
+	for i := 0; i < 12; i++ {
+		if i < 10 {
+			ipBuf = append(ipBuf, 0x00)
+		} else {
+			ipBuf = append(ipBuf, 0xff)
+		}
+	}
+	ipBuf = append(ipBuf, v.senderIP...)
+	result = append(result, ipBuf...)
+	result = append(result, tx.BigIntToLittleEndian(
+		big.NewInt(int64(v.senderPort)), tx.LITTLE_ENDIAN_2_BYTES)...)
+
+	result = append(result, v.nonce...)
+	agentLen := tx.EncodeVarint(big.NewInt(int64(len(v.userAgent))))
+	result = append(result, agentLen...)
+	result = append(result, []byte(v.userAgent)...)
+	result = append(result, tx.BigIntToLittleEndian(v.latestBlock, tx.LITTLE_ENDIAN_4_BYTES)...)
+	if v.relay {
+		result = append(result, 0x01)
+	} else {
+		result = append(result, 0x00)
+	}
+
+	return result
+}
+
+```
+We can try to run aboved code in main.go as following:
+```go
+func main() {
+	version := networking.NewVersionMessage()
+	fmt.Printf("version:%x\n", version.Serialize())
+}
+```
+Then I get the following result, you may have different result compared with me:
+```go
+version:7f1101df5d6e6600000000000000000000000000000000000000000000000000000000000000000000ffff000000008d2000000000000000000000000000000000000000000000000000000000000000000000ffff000000008d2052fdfc072182654f13676f6c6f616e645f626974636f696e5f6c69620000000000
+```
+
+As shown by the imaged aboved, when node A wants to connect with node B, the following process happens:
+
+1, A sends a version message to B
+
+2, B receives the version message from A, if B accepts the version message, it returns a verack message and sends its own version message
+
+3, A receives the version message from B then send a verack message back to B
+
+4, B receives the verack message from A and continues communication
+
+Now let's add the implementation of  verack message. Since its very simple, We can put it in version_msg.go directly as following:
+
+```go
+func NewVerAckMessage() *VerAckMessage {
+	return &VerAckMessage{
+		command: "verack",
+	}
+}
+
+type VerAckMessage struct {
+	command string
+}
+
+func (v *VerAckMessage) Serialize() []byte {
+	return []byte{}
+}
+```
+Then we use socket to initialize the communication between our node and the bitcoin node we setup aboved, create a new file called
+simple_node.go, add the following code:
+```go
+
+```
+
