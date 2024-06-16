@@ -265,10 +265,10 @@ import (
 )
 
 type VersionMessage struct {
-        command          string
+	command          string
 	version          *big.Int
 	services         *big.Int
-	timestamp        []byte
+	timestamp        *big.Int
 	receiverServices *big.Int
 	receiverIP       []byte
 	receiverPort     uint16
@@ -287,14 +287,13 @@ func NewVersionMessage() *VersionMessage {
 		we only create this command to connect to a local full node
 		and we can set all the fields to default value
 	*/
-	timeStamp := big.NewInt(time.Now().Unix())
 	nonceBuf := make([]byte, 8)
 	rand.Read(nonceBuf)
 	return &VersionMessage{
-                command:          "version",
+		command:          "version",
 		version:          big.NewInt(70015),
 		services:         big.NewInt(0),
-		timestamp:        timeStamp.Bytes(),
+		timestamp:        big.NewInt(time.Now().Unix()),
 		receiverServices: big.NewInt(0),
 		receiverIP:       []byte{0x00, 0x00, 0x00, 0x00},
 		receiverPort:     8333,
@@ -308,14 +307,15 @@ func NewVersionMessage() *VersionMessage {
 	}
 }
 
-func (v *VerAckMessage)Command() string {
+func (v *VersionMessage) Command() string {
 	return v.command
 }
 
 func (v *VersionMessage) Serialize() []byte {
 	result := make([]byte, 0)
-	result = append(result, tx.ReverseByteSlice(v.version.Bytes())...)
-	result = append(result, tx.ReverseByteSlice(v.timestamp)...)
+	result = append(result, tx.BigIntToLittleEndian(v.version, tx.LITTLE_ENDIAN_4_BYTES)...)
+	result = append(result, tx.BigIntToLittleEndian(v.services, tx.LITTLE_ENDIAN_8_BYTES)...)
+	result = append(result, tx.BigIntToLittleEndian(v.timestamp, tx.LITTLE_ENDIAN_8_BYTES)...)
 	result = append(result, tx.BigIntToLittleEndian(v.receiverServices, tx.LITTLE_ENDIAN_8_BYTES)...)
 	//ip need to be 16 bytes with 0x00...ffff as prefix
 	ipBuf := make([]byte, 16)
@@ -329,8 +329,7 @@ func (v *VersionMessage) Serialize() []byte {
 	ipBuf = append(ipBuf, v.receiverIP...)
 	result = append(result, ipBuf...)
 
-	result = append(result, tx.BigIntToLittleEndian(
-		big.NewInt(int64(v.receiverPort)), tx.LITTLE_ENDIAN_2_BYTES)...)
+	result = append(result, big.NewInt(int64(v.receiverPort)).Bytes()...)
 	result = append(result, tx.BigIntToLittleEndian(v.senderServices, tx.LITTLE_ENDIAN_8_BYTES)...)
 	ipBuf = make([]byte, 16)
 	for i := 0; i < 12; i++ {
@@ -342,8 +341,7 @@ func (v *VersionMessage) Serialize() []byte {
 	}
 	ipBuf = append(ipBuf, v.senderIP...)
 	result = append(result, ipBuf...)
-	result = append(result, tx.BigIntToLittleEndian(
-		big.NewInt(int64(v.senderPort)), tx.LITTLE_ENDIAN_2_BYTES)...)
+	result = append(result, big.NewInt(int64(v.senderPort)).Bytes()...)
 
 	result = append(result, v.nonce...)
 	agentLen := tx.EncodeVarint(big.NewInt(int64(len(v.userAgent))))
@@ -357,7 +355,11 @@ func (v *VersionMessage) Serialize() []byte {
 	}
 
 	return result
+
 }
+
+
+
 
 ```
 We can try to run aboved code in main.go as following:
@@ -402,6 +404,112 @@ func (v *VerAckMessage) Serialize() []byte {
 Then we use socket to initialize the communication between our node and the bitcoin node we setup aboved, create a new file called
 simple_node.go, add the following code:
 ```go
+package networking
+
+import (
+	"bytes"
+	"fmt"
+	"net"
+)
+
+type Message interface {
+	Command() string
+	Serialize() []byte
+}
+
+type SimpleNode struct {
+	host        string
+	port        uint16
+	testnet     bool
+	receiveMsgs []Message
+}
+
+func NewSimpleNode(host string, port uint16, testnet bool) *SimpleNode {
+	return &SimpleNode{
+		host:    host,
+		port:    port,
+		testnet: testnet,
+	}
+}
+
+func (s *SimpleNode) Run() {
+	/*
+		using socket connect to given host with given port, then
+		construct package with payload is version message and send to
+		the peer, waiting peer to send back its version message and verack,
+		and we send verack back to peer and close the connection
+	*/
+	conStr := fmt.Sprintf("%s:%d", s.host, s.port)
+	conn, err := net.Dial("tcp", conStr)
+	if err != nil {
+		panic(err)
+	}
+
+	s.WaitFor(conn)
+}
+
+func (s *SimpleNode) Send(conn net.Conn, msg Message) {
+	envelop := NewNetworkEnvelope([]byte(msg.Command()), msg.Serialize(), s.testnet)
+	n, err := conn.Write(envelop.Serialize())
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("write to %d bytes\n", n)
+}
+
+func (s *SimpleNode) Read(conn net.Conn) []*NetworkEnvelope {
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		panic(err)
+	}
+	/*
+		the peer node may return version and verack
+		at once
+	*/
+	var msgs []*NetworkEnvelope
+	parsedLen := 0
+	for {
+		if parsedLen >= n {
+			break
+		}
+		msg := ParseNetwork(buf, s.testnet)
+		msgs = append(msgs, msg)
+		if parsedLen < n {
+			parsedLen += len(msg.Serialize())
+			buf = buf[parsedLen:]
+		}
+	}
+	return msgs
+}
+
+func (s *SimpleNode) WaitFor(conn net.Conn) {
+	s.Send(conn, NewVersionMessage())
+
+	verackReceived := false
+	versionReceived := false
+	for !verackReceived || !versionReceived {
+		msgs := s.Read(conn)
+		for i := 0; i < len(msgs); i++ {
+			msg := msgs[i]
+			command := string(bytes.Trim(msg.command, "\x00"))
+			fmt.Printf("command:%s\n", command)
+			if command == "verack" {
+				fmt.Printf("receiving verack message from peer\n")
+				verackReceived = true
+			}
+			if command == "version" {
+				versionReceived = true
+				fmt.Printf("receiving version message from peer\n: %s", msg)
+				s.Send(conn, NewVerAckMessage())
+
+			}
+
+		}
+
+	}
+}
 
 ```
 
