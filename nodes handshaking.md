@@ -178,11 +178,24 @@ field of given network packet header in aboved code, its content is "version". D
 command "version" as example, following is raw binary payload data for command "version" with ip4 address format(we don't use payload above
 because its ip format is ip6 not ip4)
 ```go
-7f1101000000000000000000ad17835b000000000000000000000000 00000000000000000000ffff00000000
-8d20
+7f110100
+
 0000000000000000
+
+ad17835b00000000
+
+0000000000000000
+
 00000000000000000000ffff00000000
+
 8d20
+
+0000000000000000
+
+00000000000000000000ffff00000000
+
+8d20
+
 f6a8d7a440ec27a1
 
 1b2f70726f6772616d6d696e67626c6f636b636861696e3a302e312f
