@@ -525,4 +525,15 @@ func (s *SimpleNode) WaitFor(conn net.Conn) {
 }
 
 ```
+Running aboved code we can get the following result:
+```go
+write to 161 bytes
+command:version
+receiving version message from peer
+: version : 801101000904000000000000403771660000000000000000000000000000000000000000000000000000000000000904000000000000000000000000000000000000000000000000c06b203d5f25c603102f5361746f7368693a32352e302e302f3df20c0000
+write to 24 bytes
+command:verack
+receiving verack message from peer
+```
+We can see that from the result, our peer sending version and verack packets to us after we sending a version package to it.
 
