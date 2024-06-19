@@ -61,6 +61,7 @@ func NewGetHeaderMessage(startBlock []byte) *GetHeaderMessage {
 	}
 }
 
+
 func (g *GetHeaderMessage) Serialize() []byte {
 	result := make([]byte, 0)
 	result = append(result, tx.BigIntToLittleEndian(g.version,
@@ -108,18 +109,30 @@ it is only one byte long and its value is 0x02, which means there are two block 
 
 Let's see how to use code to parse the return data for get header request:
 ```go
+func LenOfVarint(val *big.Int) int {
+	shiftBytes := len(val.Bytes())
+	if val.Cmp(big.NewInt(0xfd)) > 0 {
+		//if the value bigger than 0xfd, we need to shift
+		//one more byte
+		shiftBytes += 1
+	}
+
+	return shiftBytes
+}
+
 func ParseGetHeader(rawData []byte) []*tx.Block {
 	reader := bytes.NewReader(rawData)
 	bufReader := bufio.NewReader(reader)
 	numHeaders := tx.ReadVarint(bufReader)
 	fmt.Printf("header count:%d\n", numHeaders.Int64())
-	//shift to the beginning of block header
-	rawData = rawData[len(numHeaders.Bytes()):]
+	shiftBytes := LenOfVarint(numHeaders)
+	rawData = rawData[shiftBytes:]
 	blocks := make([]*tx.Block, 0)
 
 	for i := 0; i < int(numHeaders.Int64()); i++ {
 		block := tx.ParseBlock(rawData)
 		blocks = append(blocks, block)
+
 		rawData = rawData[len(block.Serialize()):]
 		reader := bytes.NewReader(rawData)
 		bufReader := bufio.NewReader(reader)
@@ -129,7 +142,7 @@ func ParseGetHeader(rawData []byte) []*tx.Block {
 			panic("number of transaction is not 0")
 		}
 
-		shift := len(numTxs.Bytes())
+		shift := LenOfVarint(numTxs)
 		if shift == 0 {
 			/*
 				big.Int will trim any prefix 0x00 in the buf,
@@ -178,4 +191,120 @@ bits:67d8001a
 nonce:de092046
 hash:00000000000000beb88910c46f6b442312361c6693a7fb52065b583979844910
 ```
+Now we have the capability to parse block header, then we can send getheader command to the full node peer and ask it to return given number
+of block headers back to us, here is the code change we add in the simple node:
+```go
+func (s *SimpleNode) Run() {
+	/*
+		using socket connect to given host with given port, then
+		construct package with payload is version message and send to
+		the peer, waiting peer to send back its version message and verack,
+		and we send verack back to peer and close the connection
+	*/
+	conStr := fmt.Sprintf("%s:%d", s.host, s.port)
+	conn, err := net.Dial("tcp", conStr)
+	if err != nil {
+		panic(err)
+	}
+
+	s.WaitFor(conn)
+
+	s.GetHeaders(conn)
+}
+
+func (s *SimpleNode) GetHeaders(conn net.Conn) {
+	//after handshaking we send get header request
+	getHeadersMsg := NewGetHeaderMessage(GetGenesisBlockHash())
+	fmt.Printf("get header raw:%x\n", getHeadersMsg.Serialize())
+
+	s.Send(conn, getHeadersMsg)
+	receivedGetHeader := false
+	for !receivedGetHeader {
+		msgs := s.Read(conn)
+		for i := 0; i < len(msgs); i++ {
+			msg := msgs[i]
+			fmt.Printf("receiving command: %s\n", msg.command)
+			command := string(bytes.Trim(msg.command, "\x00"))
+			if command == "headers" {
+				receivedGetHeader = true
+				blocks := ParseGetHeader(msg.payload)
+				for i := 0; i < len(blocks); i++ {
+					fmt.Printf("block header:\n%s\n", blocks[i])
+				}
+			}
+		}
+	}
+}
+
+func (s *SimpleNode) Send(conn net.Conn, msg Message) {
+	envelop := NewNetworkEnvelope([]byte(msg.Command()), msg.Serialize(), s.testnet)
+	n, err := conn.Write(envelop.Serialize())
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("write to %d bytes\n", n)
+}
+
+func (s *SimpleNode) Read(conn net.Conn) []*NetworkEnvelope {
+	receivedBuf := make([]byte, 0)
+	totalLen := 0
+	for {
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		if err != nil {
+			panic(err)
+		}
+		totalLen += n
+		receivedBuf = append(receivedBuf, buf...)
+		if n < 4096 {
+			break
+		}
+	}
+
+	/*
+		the peer node may return version and verack
+		at once
+	*/
+	var msgs []*NetworkEnvelope
+	parsedLen := 0
+	for {
+		if parsedLen >= totalLen {
+			break
+		}
+		msg := ParseNetwork(receivedBuf, s.testnet)
+		msgs = append(msgs, msg)
+	
+		if parsedLen < totalLen {
+			parsedLen += len(msg.Serialize())
+			receivedBuf = receivedBuf[len(msg.Serialize()):]
+		}
+	}
+	return msgs
+}
+```
+In the aboved code, in the Run method of SimpleNode, it calls WaitFor method to initialize the handshaking process, then it calls GetHeaders
+to send the getheaders command packet to the given full node peer. In GetHeaders, we ignore any return packets that their command is not
+"header", if the command of packet is "headers", then the full node peer return block header info as we require.
+
+Notices we make some change to the Read method. Since the size of returned packet may quit large, in order to completely received all
+data, we first create a 4k buffer, if the returned data volumn is larger than 4k, then we create another 4k buffer to get the remaining
+data. We keep create new 4k buffer as long as there are more than 4k bytes of data we need to read.
+
+Then we use ParseGetHeader method to parse the return payload, We have already discuss about the logic of ParseGetHeader before, when 
+running the aboved code, I can get the following result:
+```go
+header count:2000
+block header:
+version:00000001
+previous block id:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+merkle root:0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098
+time stamp:4966bc61
+bits:ffff001d
+nonce:01e36299
+hash:00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048
+
+....
+```
+Since my full node peer has already download lots of block data from the chain therefore it can return 2000 block headers to me at once!
 
