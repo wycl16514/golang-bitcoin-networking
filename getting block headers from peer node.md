@@ -220,6 +220,8 @@ func (s *SimpleNode) GetHeaders(conn net.Conn) {
 	s.Send(conn, getHeadersMsg)
 	receivedGetHeader := false
 	for !receivedGetHeader {
+                //let the peer have a rest
+		time.Sleep(2 * time.Second)
 		msgs := s.Read(conn)
 		for i := 0; i < len(msgs); i++ {
 			msg := msgs[i]
